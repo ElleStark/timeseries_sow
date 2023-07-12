@@ -1,3 +1,7 @@
+# Select data folders
+Data/ignore
+Data/temp
+
 # History files
 .Rhistory
 .Rapp.history
