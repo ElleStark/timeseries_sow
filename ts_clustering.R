@@ -16,6 +16,20 @@ normalize_col <- function(x){
   (x - min(x))/(max(x)-min(x))
 }
 
+### Function to convert distance object to dataframe with each row as one pairwise distance 
+# Copied from: https://stackoverflow.com/questions/23474729/convert-object-of-class-dist-into-data-frame-in-r
+dist_2_df <- function(inDist) {
+  if (class(inDist) != "dist") stop("wrong input type")
+  A <- attr(inDist, "Size")
+  B <- if (is.null(attr(inDist, "Labels"))) sequence(A) else attr(inDist, "Labels")
+  if (isTRUE(attr(inDist, "Diag"))) attr(inDist, "Diag") <- FALSE
+  if (isTRUE(attr(inDist, "Upper"))) attr(inDist, "Upper") <- FALSE
+  data.frame(
+    row = B[unlist(lapply(sequence(A)[-1], function(x) x:A))],
+    col = rep(B[-length(B)], (length(B)-1):1),
+    distance = as.vector(inDist))
+}
+
 ################# OBTAIN DATA #####################
 initial_sow_set <- readRDS('Data/inputs/initial_sow_set_uclhs_500.rds')
 
@@ -115,7 +129,7 @@ for(i in 2:10){
                                                 group=sow_idx)) +
     geom_path() +
     ylab('Cumulative Flow at Lee Ferry (MAF)')
-  f_name <- paste0('Data/temp/ts_clust_size_annual/k.', i, '/cumulative_ts.png')
+  f_name <- paste0('Data/temp/ts_clust_size/k.', i, '/cumulative_ts.png')
   ggsave(f_name, plot = cumulative_plot, width = 12, height = 7)
 
   # Plot individual clusters of annual LF flow
@@ -125,7 +139,7 @@ for(i in 2:10){
       geom_path(alpha=0.4) +
       ylab('Annual Flow at Lee Ferry (MAF)') +
       ylim(0, 45)
-    f_name <- paste0('Data/temp/ts_clust_size_annual/k.', i, '/annual_ts_clust', j, '.png')
+    f_name <- paste0('Data/temp/ts_clust_size/k.', i, '/annual_ts_clust', j, '.png')
     ggsave(f_name, plot = annual_plot, width = 12, height = 7)
   }
 
@@ -165,6 +179,7 @@ flow_clustered_wide <- mutate(cumulative_flow_df_wide,
 flow_clustered_long <- pivot_longer(flow_clustered_wide,
                                     cols = -c('Scenario', 'TraceNumber', 'sow_idx', 'Cluster'),
                                     names_to = 'Year', values_to = 'LF_cumulative')
+saveRDS(flow_clustered_wide, 'Data/outputs/cumulative_flow_wide_clustered.RDS')
 
 # Cluster indexes
 cluster_idx <- select(flow_clustered_wide, sow_idx, Cluster)
@@ -172,14 +187,16 @@ cluster_idx <- select(flow_clustered_wide, sow_idx, Cluster)
 # Save cluster number for each SOW index 
 saveRDS(cluster_idx, 'Data/outputs/ts_clusters_idx.rds')
 
+n_clust <- 4
+
 
 ### Create optimization groups that take into account demand and initial conditions 
 
 # Label SOW uncertainty dataframe with clusters
-clustered_sow <- mutate(initial_sow_set, 'Cluster'=cluster_idx$Cluster)
+clustered_sow <- mutate(initial_sow_set, 'Cluster'=cluster_idx$Cluster, 'sow_idx'=seq(1,500, by=1))
 
 # Pairwise scatter of clusters mapped onto uncertainty metrics
-cluster_pairs <- ggpairs(dplyr::select(clustered_sow, -Scenario, -TraceNumber), 
+cluster_pairs <- ggpairs(dplyr::select(clustered_sow, -Scenario, -TraceNumber, -sow_idx), 
                          ggplot2::aes(col=Cluster, alpha=0.5))
 
 
@@ -222,7 +239,7 @@ good_sow_list_all <- list()
 thresholds <- data.frame(matrix(ncol = 3, nrow = 0))
 colnames(thresholds) <- c('Mead', 'Powell', 'Demand')
 
-for (c in 1:4){
+for (c in 1:n_clust){
   cluster_sow <- filter(clustered_sow, Cluster==c)
   for(i in 1:length(mead_bad)){
     bad_sow_m <- filter(cluster_sow, mead_pe<=mead_bad[i])
@@ -247,7 +264,7 @@ for (c in 1:4){
 
 bad_idx_list <- list()
 good_idx_list <- list()
-for (i in 1:4){
+for (i in 1:n_clust){
   # find index of SOW lists in each cluster with at least 8 rows
   # see if other clusters have any matching indexes
   b_sow_list <- bad_sow_list_all[[i]]
@@ -266,10 +283,37 @@ selected_good_sow = list()
 selected_bad_sow = list()
 thresh_idx = 160
 
-for(i in 1:4){
+for(i in 1:n_clust){
   selected_good_sow[[i]] <- good_sow_list_all[[i]][thresh_idx]
   selected_bad_sow[[i]] <- bad_sow_list_all[[i]][thresh_idx]
 }
+
+sow_bad_df <- rbind(selected_bad_sow[[1]][[1]], selected_bad_sow[[2]][[1]], 
+                    selected_bad_sow[[3]][[1]], selected_bad_sow[[4]][[1]])
+sow_bad_df['ic_cat'] <- 'bad' # ic_cat stands for initial conditions & demand category
+
+sow_good_df <- rbind(selected_good_sow[[1]][[1]], selected_good_sow[[2]][[1]], 
+                    selected_good_sow[[3]][[1]], selected_good_sow[[4]][[1]])
+sow_good_df['ic_cat'] <- 'good' # ic_cat stands for initial conditions & demand category
+
+categorized_sow <- rbind(sow_bad_df, sow_good_df)
+ic_cat_idx <- dplyr::select(categorized_sow, sow_idx, ic_cat)
+saveRDS(categorized_sow, 'Data/outputs/SOW_metrics_ICcat.rds')
+saveRDS(ic_cat_idx, 'Data/outputs/IC_cat_sow_idx.rds')
+
+# Get long format LF cumulative flow data for above sow categories
+cat_flow_long <- inner_join(flow_clustered_long, ic_cat_idx, by='sow_idx')
+cat_flow_wide <- inner_join(flow_clustered_wide, ic_cat_idx, by='sow_idx')
+#cat_flow_long <- left_join(flow_clustered_long, ic_cat_idx, by='sow_idx') %>% 
+#  mutate(ic_cat=replace_na(ic_cat, 'a_mix'))
+
+# Plot each cluster showing 'good' and 'bad' demand/i.c.
+cluster_plot_IC <- ggplot(cat_flow_long[cat_flow_long$Cluster=='1',], aes(x=Year, y=LF_cumulative, col=ic_cat,
+                                                   group=sow_idx)) +
+  geom_path() +
+  ylab('Cumulative Flow at Lee Ferry (MAF)') +
+  ylim(0, 600)
+
 
 
 
@@ -278,3 +322,100 @@ for(i in 1:4){
 # use 8 sow to match number in baseline optimization
 # also allows for 18-core machine to run 2 simultaneous Borg runs 
 n_sow = 8 
+
+### Need to go through each group and select traces
+# 1. Good hydrology, demand, and initial conditions: 
+      # Cluster 4, good ic_cat
+# 2. Good hydrology, bad demand, and bad initial conditions:
+      # Cluster 4, bad ic_cat
+# 3. Bad hydrology, good demand, and good initial conditions
+      # Cluster 1, good ic_cat
+# 4. Bad hydrology, bad demand, and bad initial conditions:
+      # Cluster 1, bad ic_cat
+badH_badIC_df <- categorized_sow[which(categorized_sow$Cluster=='1' & categorized_sow$ic_cat=='bad'),]
+badH_goodIC_df <- categorized_sow[which(categorized_sow$Cluster=='1' & categorized_sow$ic_cat=='good'),]
+goodH_badIC_df <- categorized_sow[which(categorized_sow$Cluster=='4' & categorized_sow$ic_cat=='bad'),]
+goodH_goodIC_df <- categorized_sow[which(categorized_sow$Cluster=='4' & categorized_sow$ic_cat=='good'),]
+
+df_groups_list <- list('badH_badIC_df'=badH_badIC_df, 'badH_goodIC_df'=badH_goodIC_df, 
+                       'goodH_badIC_df'=goodH_badIC_df, 'goodH_goodIC_df'=goodH_goodIC_df)
+# Labels used for saving results later
+group_labels <- c('badH_badIC', 'badH_goodIC', 'goodH_badIC', 'goodH_goodIC')
+
+bad_hydr_idx <- c(1,2)
+good_hydr_idx <- c(3,4)
+
+# Loop through each group to select based on hydrology and plot results
+for(i in 1:length(df_groups_list)){
+  df = df_groups_list[[i]]
+  
+  ggpairs(dplyr::select(badH_badIC_df, 
+                        -Scenario, -TraceNumber, -sow_idx, -ic_cat, -Cluster))
+  
+  flow_df <- filter(flow_clustered_wide, sow_idx %in% df$sow_idx)
+  
+
+  flow_for_dist <- as.data.frame(t(select(flow_df, -Cluster,
+                                          -Scenario, -TraceNumber, -sow_idx)))
+  
+  # Calculate pairwise distances in group based on time series of LF cumulative flow
+  cid_matrix <- diss(flow_for_dist, 'CID')
+  # Convert dissimilartiy matrix to dataframe to process - function at top of script
+  cid_df <- dist_2_df(cid_matrix)
+  
+  # If in quadrant with 'good' hydrology, choose traces closest to trace with max cumulative LF flow
+  if(i %in% good_hydr_idx){
+    flow_idx <- which.max(as.matrix(flow_df[,(ncol(flow_df)-1)]))
+  }
+  # If in quadrant with 'bad' hydrology, choose traces closest to trace with min cumulative LF flow
+  if(i %in% bad_hydr_idx){
+    flow_idx <- which.min(as.matrix(flow_df[,(ncol(flow_df)-1)]))
+  }
+  
+  # Filter dissimilarity matrix to only comparisons with selected extreme SOW
+  compare_df <- filter(cid_df, (row==paste0('V',flow_idx)) | col==paste0('V', flow_idx))
+  # Select nearest traces to get desired number of SOW
+  nearest <- compare_df %>% slice_min(distance, n=n_sow-1)
+  # Process list to get SOW index for referencing other dataframes
+  nearest_list <- as.vector(as.matrix(nearest[,c('row', 'col')])) 
+  nearest_list <- nearest_list[!nearest_list==paste0('V',flow_idx)]
+  nearest_list <- as.integer(sub('V', '', nearest_list))
+  selected_temp_idx <- c(flow_idx, nearest_list)
+  selected_flows <- flow_df[selected_temp_idx,]
+  selected_sow_idx <- selected_flows$sow_idx
+  
+  # FINAL DATA FRAME of SOW for that group, labeling those selected for optimization
+  df <- mutate(df, 'selected'=(df$sow_idx %in% selected_sow_idx))
+  
+  # Save selected SOW as RDS and csv
+  selected_df <- df[which(df$selected==TRUE),]
+  f_name <- paste0('Data/outputs/opt_sow_', group_labels[i], '.rds')
+  saveRDS(selected_df, f_name)
+  f_name <- paste0('Data/outputs/opt_sow_', group_labels[i], '.csv')
+  write.csv(selected_df, f_name)
+  
+  # plot selected flows - pairwise
+  pairs_selected <- ggpairs(dplyr::select(df, -Scenario, -TraceNumber, -sow_idx, 
+                        -ic_cat, -Cluster), ggplot2::aes(col=selected))
+  
+  f_name <- paste0('Data/outputs/pairs_group', i, '.png')
+  ggsave(f_name, pairs_selected, width = 12, height = 7)
+  
+  # plot selected flows - cumulative
+  cluster_plot_selected <- ggplot() +
+    geom_path(cat_flow_long[cat_flow_long$sow_idx %in% df$sow_idx,], mapping=aes(x=Year, y=LF_cumulative,
+                                                                         group=sow_idx), col='darkgray') +
+    geom_path(data = cat_flow_long[cat_flow_long$sow_idx %in% selected_sow_idx,], mapping=aes(x=Year, y=LF_cumulative,
+                                                                                group=sow_idx), col='red') +
+    ylab('Cumulative Flow at Lee Ferry (MAF)') +
+    ylim(0, 600)
+  
+  f_name <- paste0('Data/outputs/flow_group', i, '.png')
+  ggsave(f_name, cluster_plot_selected, width = 11, height = 7)
+}
+
+
+
+
+
+
