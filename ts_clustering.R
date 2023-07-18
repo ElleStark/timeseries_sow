@@ -38,7 +38,7 @@ flow_data_alltraces <- read.csv('Data/inputs/hydrology_all_annual.csv')
 # Filter to 2024-2056 (simulation period)
 sim_start = 2024
 sim_end = 2056
-flow_data_alltraces <- subset(flow_data_alltraces, Year>=sim_start & Year<=sim_end) %>%
+flow_data_alltraces <- subset(flow_data_alltraces, Year>=sim_start & Year<=(sim_end+1)) %>%
   dplyr::select(-c('X', 'ID'))
 
 wide_flow_data_alltraces <- pivot_wider(flow_data_alltraces, 

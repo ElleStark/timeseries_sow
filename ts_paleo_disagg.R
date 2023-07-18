@@ -6,7 +6,7 @@
 # Install disagreggation package and CO River Natural flow package if needed: 
 #library(devtools)
 #install_github('rabutler-usbr/knnstdisagg')
-install_github('rabutler-usbr/CoRiverNF')
+#install_github('rabutler-usbr/CoRiverNF')
 
 
 library(knnstdisagg)
@@ -14,9 +14,18 @@ library(CoRiverNF)
 library(tidyverse)
 
 ############ OBTAIN AND SET UP DATA ########################
+
+# Annual flow data
+flow_data <- readRDS('Data/inputs/annual_flow_long.rds')
+
+# List of folder names for finding data and creating CRSS input files
+selected_sow_list <- c('badHydro_badSCD', 'badHydro_goodSCD')
+
+# MAYBE START LOOP HERE TO GO THROUGH EACH FOLDER AUTOMATICALLY
+# setwd(paste0('Data/outputs/paleo_disagg/', selected_sow_list[m]))
+
 # sow as selected in 'ts_clustering.R'
 all_selected_sow <- readRDS('Data/outputs/opt_sow_badH_badIC.rds')
-flow_data <- readRDS('Data/inputs/annual_flow_long.rds')
 
 # Find sow index for paleo flows (already have disaggregated data for other sources)
 paleo_idx <- all_selected_sow %>%
@@ -56,8 +65,37 @@ disagg <- knn_space_time_disagg(
   k_weights = knn_params_default(nrow(annual_index))
 )
 
-head(knnst_get_disagg_data(disagg)[,5:10])
+tail(knnst_get_disagg_data(disagg)[,5:10])
+i=1
+write_knnst(disagg, 'Data/outputs/paleo_disagg/badHydro_badIC')
 
-write_knnst(disagg, 'Data/outputs/paleo_disagg/badHydro')
+disagg_df <- read.csv('Data/outputs/paleo_disagg/badHydro_badIC/disagg_1.csv')
+disagg_df <- round(disagg_df[,-1], digits=4)
+
+#### Create files for CRSS input
+# Write header lines into txt file (CHANGE SIMULATION INFO IF NEEDED)
+writeLines(c('start_date: 2024-1-31 24:00', 'units: acre-ft/month'), 
+           'Data/outputs/paleo_disagg/badHydro_badSCD/headertext.txt')
+
+for(i in 1:ncol(disagg_df)){
+  # Get filename
+  inflow_pt <- colnames(disagg_df[i])
+  inflow_file <- paste0('Data/outputs/paleo_disagg/badHydro_badSCD/', inflow_pt, 'NF.inflow')
+  
+  # Save flows for one column as txt 
+  f_temp <- paste0('Data/outputs/paleo_disagg/badHydro_badSCD/', inflow_pt, 'flow_only.txt')
+  write.table(disagg_df[i], file = f_temp, row.names = FALSE, col.names = FALSE)
+  
+  # Append header info 
+  file.copy('Data/outputs/paleo_disagg/badHydro_badSCD/headertext.txt', 
+            inflow_file)
+  file.append(inflow_file, f_temp)
+  
+  # Delete temporary file
+  file.remove(f_temp)
+}
+
+
+
   
   
