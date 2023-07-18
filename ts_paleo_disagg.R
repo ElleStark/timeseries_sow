@@ -12,6 +12,7 @@
 library(knnstdisagg)
 library(CoRiverNF)
 library(tidyverse)
+library(CRSSIO)
 
 ############ OBTAIN AND SET UP DATA ########################
 
@@ -24,6 +25,7 @@ sow_folder_list <- c('badHydro_badSCD', 'badHydro_goodSCD',
                      'goodHydro_badSCD', 'goodHydro_goodSCD')
 
 for(m in 1:length(sow_folder_list)){
+  m=1
   # LOOP THROUGH EACH FOLDER AUTOMATICALLY
   folder <- paste0('C:/Users/elles/Documents/CU_Boulder/Research/ROAM_code/timeseries_sow/Data/outputs/paleo_disagg/', 
                    sow_folder_list[m])
@@ -56,6 +58,7 @@ for(m in 1:length(sow_folder_list)){
   
   ##### Loop through each paleo trace in the folder
   for(t in 1:length(paleo_idx)){
+    t=1
     # Get scenario, trace number, sow index
     scen <- scen_list[t]
     trace <- trace_list[t]
@@ -67,6 +70,7 @@ for(m in 1:length(sow_folder_list)){
     ann_flow <- ann_flow_all[which(ann_flow_all$sow_idx==sow),]
     ann_flow$Year <- as.numeric(ann_flow$Year)
     ann_flow$LF_Annual <- ann_flow$LF_Annual*1000000
+    ann_flow_df <- ann_flow
     ann_flow <- as.matrix(dplyr::select(ann_flow, -sow_idx))
     
     # create disaggregation object
@@ -110,6 +114,24 @@ for(m in 1:length(sow_folder_list)){
       # Delete temporary file
       file.remove(f_temp)
     }
+    # Add supply scenario file: see https://github.com/BoulderCodeHub/CRSSIO/wiki/Scenario-Numbering-Convention
+    if(scen=='DPNF'){
+      supply_scen <- '2'
+    }
+    if(scen=='PCNF'){
+      supply_scen <- '3'
+    }
+    writeLines(c('units: NONE', supply_scen), paste0(folder, '/', scen, trace, '_sow', sow, '/',
+                                                     'HydrologyParameters.SupplyScenario'))
+    # Add TraceNumber file: 
+    writeLines(c('units: NONE', as.character(trace)), paste0(folder, '/', scen, trace, '_sow', sow, '/',
+                                                             'HydrologyParameters.TraceNumber'))
+    
+    # Add SacWYType file:
+    dates <- seq(as.Date('2024-12-31'), length=length(ann_flow_df$LF_Annual), by='years')
+    wy_vol <- xts(x=ann_flow_df$LF_Annual/1000000, order.by = dates)
+    sac_wy_type <- CRSSIO::sac_year_type_calc(wy_vol = wy_vol)  
+    ##### SAVE FILE ###########
   }
 }
 
