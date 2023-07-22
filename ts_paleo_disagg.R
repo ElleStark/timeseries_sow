@@ -25,7 +25,6 @@ sow_folder_list <- c('badHydro_badSCD', 'badHydro_goodSCD',
                      'goodHydro_badSCD', 'goodHydro_goodSCD')
 
 for(m in 1:length(sow_folder_list)){
-  m=1
   # LOOP THROUGH EACH FOLDER AUTOMATICALLY
   folder <- paste0('C:/Users/elles/Documents/CU_Boulder/Research/ROAM_code/timeseries_sow/Data/outputs/paleo_disagg/', 
                    sow_folder_list[m])
@@ -45,7 +44,7 @@ for(m in 1:length(sow_folder_list)){
   ann_flow_all <- flow_data %>%
     filter(sow_idx %in% paleo_idx) %>%
     dplyr::select(sow_idx, Year, LF_Annual)
-  
+
   # setup annual data (see knnstdisagg documentation)
   annual_index <- CoRiverNF::wyAnnTot$LeesFerry
   yrs <- as.numeric(format(index(wyAnnTot$LeesFerry), "%Y"))
@@ -58,7 +57,6 @@ for(m in 1:length(sow_folder_list)){
   
   ##### Loop through each paleo trace in the folder
   for(t in 1:length(paleo_idx)){
-    t=1
     # Get scenario, trace number, sow index
     scen <- scen_list[t]
     trace <- trace_list[t]
@@ -93,26 +91,16 @@ for(m in 1:length(sow_folder_list)){
     disagg_df <- round(disagg_df[,-1], digits=4) # exclude first column ('Year')
     
     #### Create files for CRSS input
-    # Write header lines into txt file (CHANGE SIMULATION INFO IF NEEDED)
-    writeLines(c('start_date: 2024-1-31 24:00', 'units: acre-ft/month'), 
-               'headertext.txt')
-    
     for(i in 1:ncol(disagg_df)){
       # Get filename
       inflow_pt <- colnames(disagg_df[i])
       inflow_file <- paste0(folder, '/', scen, trace, '_sow', sow, '/', inflow_pt, 'NF.inflow')
       
-      # Save flows for one column as txt 
-      f_temp <- paste0(folder, '/', inflow_pt, 'flow_only.txt')
-      write.table(disagg_df[i], file = f_temp, row.names = FALSE, col.names = FALSE)
-      
-      # Append header info 
-      file.copy('headertext.txt', 
-                inflow_file)
-      file.append(inflow_file, f_temp)
-      
-      # Delete temporary file
-      file.remove(f_temp)
+      # Save txt file for each inflow point with flow values 
+      writeLines(c('start_date: 2024-1-31 24:00', 'units: acre-ft/month'), 
+                  inflow_file)
+      write.table(disagg_df[i], file = inflow_file, row.names = FALSE, col.names = FALSE, 
+                  append = TRUE)
     }
     # Add supply scenario file: see https://github.com/BoulderCodeHub/CRSSIO/wiki/Scenario-Numbering-Convention
     if(scen=='DPNF'){
@@ -129,9 +117,15 @@ for(m in 1:length(sow_folder_list)){
     
     # Add SacWYType file:
     dates <- seq(as.Date('2024-12-31'), length=length(ann_flow_df$LF_Annual), by='years')
-    wy_vol <- xts(x=ann_flow_df$LF_Annual/1000000, order.by = dates)
-    sac_wy_type <- CRSSIO::sac_year_type_calc(wy_vol = wy_vol)  
-    ##### SAVE FILE ###########
+    wy_vol <- xts(x=ann_flow_df$LF_Annual/1000000, order.by = dates) # need xts object for input to CRSSIO function
+    sac_wy_type <- CRSSIO::sac_year_type_calc(wy_vol = wy_vol)
+    sactype_list <- drop(coredata(sac_wy_type)) # use drop() and coredata() to get xts values as a vector
+    writeLines(c('start_date: 2024-12-31 24:00', 'units: NONE', sactype_list), 
+               paste0(folder, '/', scen, trace, '_sow', sow, '/','MWD_ICS.SacWYType'))
+    
+    # Add St Vrain flow input file:
+    # see https://github.com/zackary-leady/StVrain_NaturalFlow_Model/tree/main
+    
   }
 }
 
