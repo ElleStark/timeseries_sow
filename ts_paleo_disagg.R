@@ -19,10 +19,17 @@ library(CRSSIO)
 # Annual flow data
 setwd('C:/Users/elles/Documents/CU_Boulder/Research/ROAM_code/timeseries_sow/Data')
 flow_data <- readRDS('inputs/annual_flow_long.rds')
+sim_yrs <- seq(2024, 2056, by=1)
+flow_data <- flow_data %>%
+  filter(Year %in% sim_yrs)
 
 # List of folder names for finding data and creating CRSS input files
 sow_folder_list <- c('badHydro_badSCD', 'badHydro_goodSCD', 
                      'goodHydro_badSCD', 'goodHydro_goodSCD')
+
+# Set up data frame for tracking Glenwood Springs flow (for St Vrain inflow calcs)
+# Easiest to put data for all traces in a single Excel book for processing
+gwsprings_df <- data.frame('year' = sim_yrs)
 
 for(m in 1:length(sow_folder_list)){
   # LOOP THROUGH EACH FOLDER AUTOMATICALLY
@@ -46,14 +53,18 @@ for(m in 1:length(sow_folder_list)){
     dplyr::select(sow_idx, Year, LF_Annual)
 
   # setup annual data (see knnstdisagg documentation)
-  annual_index <- CoRiverNF::wyAnnTot$LeesFerry
-  yrs <- as.numeric(format(index(wyAnnTot$LeesFerry), "%Y"))
+  annual_index <- CoRiverNF::cyAnnTot$LeesFerry
+  yrs <- as.numeric(format(index(cyAnnTot$LeesFerry), "%Y"))
   annual_index <- as.matrix(annual_index)
   annual_index <- cbind(yrs, annual_index)
   
   # setup monthly data (see knnstdisagg documentation)
-  last_month <- paste0("/", max(yrs), "-09")
+  last_month <- paste0("/", (max(yrs)), "-12")
   monthly_data <- CoRiverNF::monthlyInt[last_month]  
+  monthly_data <- monthly_data[4:nrow(monthly_data),] # Delete first 3 rows since starting in Jan for CY
+  
+  # temporary glenwood springs data frame to build master data frame
+  gwsprings_temp <- data.frame('Years'=sim_yrs)
   
   ##### Loop through each paleo trace in the folder
   for(t in 1:length(paleo_idx)){
@@ -76,7 +87,7 @@ for(m in 1:length(sow_folder_list)){
       ann_flow = ann_flow,
       ann_index_flow = annual_index,
       mon_flow = monthly_data,
-      start_month = 10,
+      start_month = 1,
       nsim = 1,
       scale_sites = 1:20,
       k_weights = knn_params_default(nrow(annual_index))
@@ -87,7 +98,7 @@ for(m in 1:length(sow_folder_list)){
     
     disagg_df <- read.csv(paste0(folder,'/disagg_1.csv'))
     # Start file in January - uses water year by default
-    disagg_df <- tail(disagg_df, -3)
+    # disagg_df <- tail(disagg_df, -3)
     disagg_df <- round(disagg_df[,-1], digits=4) # exclude first column ('Year')
     
     #### Create files for CRSS input
@@ -123,13 +134,18 @@ for(m in 1:length(sow_folder_list)){
     writeLines(c('start_date: 2024-12-31 24:00', 'units: NONE', sactype_list), 
                paste0(folder, '/', scen, trace, '_sow', sow, '/','MWD_ICS.SacWYType'))
     
-    # Add St Vrain flow input file:
+    # Prepare St Vrain flow input file:
     # see https://github.com/zackary-leady/StVrain_NaturalFlow_Model/tree/main
-    
+    # Create data frame with Glenwood NF data for each trace 
+    gs_monthly_flow <- disagg_df[['GlenwoodSprings']]
+    gs_ann_flow <- rollapply(gs_monthly_flow, 12, sum, by=12) # sum monthly to annual
+    lab <- paste0(scen, '_', trace) # column label identifying scenario and trace number
+    #gwsprings_df[[lab]] <- gs_ann_flow
+    gwsprings_temp <- mutate(gwsprings_temp, !!lab:=gs_ann_flow)
   }
+  gwsprings_df <- cbind(gwsprings_df, gwsprings_temp[,-1])
 }
-
-
-
+# Save St Vrain flow input file as Excel:
+write.csv(gwsprings_df, file = 'outputs/paleo_disagg/gwsprings_annual.csv', row.names = FALSE)
   
   
